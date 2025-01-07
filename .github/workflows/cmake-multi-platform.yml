@@ -1,46 +1,50 @@
-name: Auto Tag and Build
+name: Auto Tag, Build, and Release
 
 on:
   push:
     branches:
-      - main  # 当推送到 main 分支时触发
-    commit_message:
-      - 'v*'  # 仅当提交信息中包含 v 开头的内容时触发
+      - main
 
 jobs:
-  build_and_tag:
+  build_and_release:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout code
+      # 检出代码
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # 检查提交信息是否符合 "v*" 格式
-      - name: Check commit message for version tag
-        id: check_version
+      # 检查提交消息是否包含以 v 开头的版本号
+      - name: Extract version from commit message
+        id: extract_version
         run: |
-          if [[ ! "${{ github.event.head_commit.message }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo "Commit message doesn't match version format (vX.X.X). Skipping tag creation."
+          TAG_NAME=$(echo "${{ github.event.head_commit.message }}" | grep -o '^v[0-9]\+\.[0-9]\+\.[0-9]\+')
+          if [ -z "$TAG_NAME" ]; then
+            echo "No valid version tag found in commit message. Skipping workflow."
             exit 0
           fi
-          echo "Commit message matches version format (vX.X.X), proceeding to create tag."
-      
-      # 创建 tag (如果满足条件)
-      - name: Create Git tag
-        if: steps.check_version.outcome == 'success'
-        run: |
-          TAG_NAME=${{ github.event.head_commit.message }}
-          git tag $TAG_NAME
-          git push origin $TAG_NAME
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+        # 如果提交消息不包含版本号，工作流会提前结束
 
-      # 安装依赖项
+      # 设置版本号为环境变量
+      - name: Echo extracted version
+        run: echo "Version to be tagged: ${{ env.TAG_NAME }}"
+
+      # 创建 Tag 并推送到远程
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ env.TAG_NAME }}
+          git push origin ${{ env.TAG_NAME }}
+
+      # 安装必要的依赖
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential
 
-      # 配置和编译项目
+      # 配置并构建项目
       - name: Configure and Build
         run: |
           mkdir build
@@ -48,30 +52,29 @@ jobs:
           cmake ..
           cmake --build .
 
-      # 打包产物
+      # 打包构建产物
       - name: Archive build artifacts
         run: |
           mkdir -p output
           cp build/TestAction output/TestAction_${{ github.sha }}
 
-      # 创建 GitHub Release 并上传构建产物
+      # 创建 Release
       - name: Create Release
-        if: steps.check_version.outcome == 'success'
+        id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ github.event.head_commit.message }}
-          release_name: Release ${{ github.event.head_commit.message }}
+          tag_name: ${{ env.TAG_NAME }}
+          release_name: Release ${{ env.TAG_NAME }}
           draft: false
           prerelease: false
 
-      - name: Upload build artifacts to Release
-        if: steps.check_version.outcome == 'success'
+      # 上传构建产物到 Release
+      - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: ./output/TestAction_${{ github.sha }}
           asset_name: TestAction_${{ github.sha }}
           asset_content_type: application/octet-stream
-          
