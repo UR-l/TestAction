@@ -78,3 +78,4 @@ jobs:
           asset_path: ./output/TestAction_${{ github.sha }}
           asset_name: TestAction_${{ github.sha }}
           asset_content_type: application/octet-stream
+          
